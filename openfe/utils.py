@@ -3,6 +3,7 @@ from .FeatureGenerator import Node, FNode
 from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
 import numpy as np
+import gc
 
 
 def tree_to_formula(tree):
@@ -12,14 +13,10 @@ def tree_to_formula(tree):
             string_2 = tree_to_formula(tree.children[1])
             return str('(' + string_1 + tree.name + string_2 + ')')
         else:
-            result = [tree.name, '(']
-            for i in range(len(tree.children)):
-                string_i = tree_to_formula(tree.children[i])
-                result.append(string_i)
-                result.append(',')
-            result.pop()
-            result.append(')')
+            result = [tree.name, '('] + [tree_to_formula(child) + ',' for child in tree.children]
+            result[-1] = ')'  # Replace the last comma with a closing parenthesis
             return ''.join(result)
+
     elif isinstance(tree, FNode):
         return str(tree.name)
     else:
@@ -132,12 +129,10 @@ def transform(X_train, X_test, new_features_list, n_jobs, name=""):
     data = pd.concat([X_train, X_test], axis=0)
     data.index.name = 'openfe_index'
     data.reset_index().to_feather('./openfe_tmp_data.feather')
+    gc.collect()
     n_train = len(X_train)
-    ex = ProcessPoolExecutor(n_jobs)
-    results = []
-    for feature in new_features_list:
-        results.append(ex.submit(_cal, feature, n_train))
-    ex.shutdown(wait=True)
+    with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+        results = list(ex.map(lambda feature: _cal(feature, n_train), new_features_list))
     _train = []
     _test = []
     names = []
@@ -161,8 +156,8 @@ def transform(X_train, X_test, new_features_list, n_jobs, name=""):
         else:
             _train[c] = _train[c].astype('float')
             _test[c] = _test[c].astype('float')
-    _train = pd.concat([X_train, _train], axis=1)
-    _test = pd.concat([X_test, _test], axis=1)
+    _train = X_train.join(_train)
+    _test = X_test.join(_test)
     return _train, _test
 
 
